@@ -69,14 +69,9 @@ Availability is checked against the time we receive the assignment request — n
 
 ## Open questions
 
-**Ticket lifecycle**
+1. **Estimated processing time.** Should tickets carry an expected-effort value (processing time) at assignment time, so load is measured in expected hours rather than ticket count?
 
-1. **Reassignment.** When an agent completes their shift, should their open tickets stay with them until their next shift, or be reassigned to other agents?
-2. **Estimated processing time.** Should tickets carry an expected-effort value (processing time) at assignment time, so load is measured in expected hours rather than ticket count?
-
-**Assignment behavior**
-
-3. **Priorities and SLAs.** Do urgent tickets exist? If so, should they jump to the least-loaded agent regardless of rotation order?
+2. **Priorities and SLAs.** Do urgent tickets exist? If so, should they jump to the least-loaded agent regardless of rotation order?
 
 ## Success criteria
 
