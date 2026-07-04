@@ -4,9 +4,9 @@
 
 Support teams distribute incoming tickets manually. A team lead watches the queue and assigns each ticket to whoever they know is on shift. This breaks as teams grow:
 
-* Tickets arriving while the lead is offline sit unassigned for hours.
-* The lead becomes a full-time dispatcher instead of doing their own work.
-* Distribution is uneven: some agents get buried while others sit idle.
+- Tickets arriving while the lead is offline sit unassigned for hours.
+- The lead becomes a full-time dispatcher instead of doing their own work.
+- Distribution is uneven: some agents get buried while others sit idle.
 
 The root cause is that assignment depends on one person's real-time knowledge of who is working. That knowledge should live in the system.
 
@@ -33,37 +33,39 @@ When a ticket arrives:
 
 ## What "available" means
 
-An agent is available if the ticket's arrival time falls inside one of their recurring weekly shift windows, in their local timezone. Availability is evaluated **at assignment time only**: if an agent's shift ends five minutes after they receive a ticket, the ticket stays with them.
+An agent is available if the current moment falls inside one of their recurring weekly shift windows, in their local timezone.
+
+Availability is checked against the time we receive the assignment request — not re-evaluated afterward, so if an agent's shift ends five minutes after they receive a ticket, the ticket stays with them. Retries return the original assignment rather than re-evaluating, and delayed or backfilled tickets go to whoever is on shift when the request arrives.
 
 ## What "fair" means
 
-* **Fairness is equal expected tickets per available hour, not per agent.** An agent scheduled for 40 hours a week receives proportionally more tickets than one scheduled for 10.
-* **Load-aware, not just turn-taking.** An agent stuck on a long-running ticket stops receiving new ones until their open count comes back down.
-* **Overlapping shifts dilute per-agent rate by design.** When two regions' shifts overlap, the pool is larger and each agent receives fewer tickets per hour.
+- **Fairness is equal expected tickets per available hour, not per agent.** An agent scheduled for 40 hours a week receives proportionally more tickets than one scheduled for 10.
+- **Load-aware, not just turn-taking.** An agent stuck on a long-running ticket stops receiving new ones until their open count comes back down.
+- **Overlapping shifts dilute per-agent rate by design.** When two regions' shifts overlap, the pool is larger and each agent receives fewer tickets per hour.
 
 ## Scope
 
 **In scope**
-* Agent and weekly shift management UI
-* Assignment API + ticket-close endpoint
-* Timezone-correct availability, including overnight shifts
-* Idempotent, concurrency-safe assignment
-* History and open tickets preserved
+- Agent and weekly shift management UI
+- Assignment API + ticket-close endpoint
+- Timezone-correct availability, including overnight shifts
+- Idempotent, concurrency-safe assignment
+- History and open tickets preserved when agents are deactivated
 
 **Out of scope** (per the brief and by decision)
-* Login, roles, billing, account management
-* Holiday calendars, one-off overrides, mobile
-* Third-party integrations (PagerDuty, Opsgenie, etc.)
-* Reassignment of tickets when an agent is deactivated mid-shift or goes offline — their open tickets remain assigned; a manual reassign action is the first thing we'd build next
-* Ticket content, priority, or routing by skill — we assign a person, nothing more
+- Login, roles, billing, account management
+- Holiday calendars, one-off overrides, mobile
+- Third-party integrations (PagerDuty, Opsgenie, etc.)
+- Reassignment of tickets when an agent is deactivated mid-shift or goes offline — their open tickets remain assigned; a manual reassign action is the first thing we'd build next
+- Ticket content, priority, or routing by skill — we assign a person, nothing more
 
 ## Assumptions
 
-* Companies, agents, and tickets are created via the API/UI.
-* The caller notifies when a ticket closes. 
-* All tickets weigh the same. The system has no signal about ticket difficulty.
-* One agent per ticket; no team assignments or reassignment.
-* Multiple tickets can be assigned to a single agent while they are on shift.
+- `company_id` and `ticket_id` are opaque identifiers supplied by the caller; we do not manage the lifecycle of companies or tickets. Agents and their shifts are the only entities our system creates and manages.
+- The caller notifies us when a ticket closes.
+- All tickets weigh the same. The system has no signal about ticket difficulty.
+- One agent per ticket; no team assignments or reassignment.
+- Multiple tickets can be assigned to a single agent while they are on shift.
 
 ## Open questions
 
@@ -74,12 +76,10 @@ An agent is available if the ticket's arrival time falls inside one of their rec
 
 **Assignment behavior**
 
-3. **Unassigned tickets.** When no one is available, does the caller queue and retry, or should we hold the ticket and auto-assign when the next shift starts?
-4. **Priorities and SLAs.** Do urgent tickets exist? If so, should they jump to the least-loaded agent regardless of rotation order?
+3. **Priorities and SLAs.** Do urgent tickets exist? If so, should they jump to the least-loaded agent regardless of rotation order?
 
 ## Success criteria
 
-* A ticket arriving at any hour is assigned within one API call, with zero human involvement.
-* Over a steady stream of tickets, agents with identical shifts receive ticket counts within ±1 of each other.
-* The same ticket submitted twice never produces two assignments.
-* "No one available" is a first-class, explicit response — never a hang or a silent failure.
+- Every assignment request, at any hour, returns in one API call either an assigned agent or a first-class "no one available" response — never a hang, a silent failure, or a wait for a human.
+- Over a steady stream of tickets, agents with identical shifts receive ticket counts within ±1 of each other.
+- The same ticket submitted twice never produces two assignments.
