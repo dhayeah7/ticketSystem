@@ -81,7 +81,7 @@ POST /api/tickets/close
 { "company_id": "acme", "ticket_id": "T-1042" }
 ```
 
-Sets `closed_at = now()` on the matching assignment (`company_id` is required — ticket IDs are only unique per company). **Idempotent**: closing an already-closed ticket returns `200` with the original `closed_at`, unchanged — retries are safe and never shift the timestamp. Unknown `(company_id, ticket_id)` → `404` (`ticket_not_assigned`): closing a ticket we never assigned is a caller error worth surfacing, not a silent no-op. Tickets cannot be reopened in trial scope.
+Sets `closed_at = clock_timestamp()` on the matching assignment (`company_id` is required — ticket IDs are only unique per company). **Idempotent**: closing an already-closed ticket returns `200` with the original `closed_at`, unchanged — retries are safe and never shift the timestamp. Unknown `(company_id, ticket_id)` → `404` (`ticket_not_assigned`): closing a ticket we never assigned is a caller error worth surfacing, not a silent no-op. Tickets cannot be reopened in trial scope.
 
 | status | body | meaning |
 |---|---|---|
@@ -99,11 +99,13 @@ Sets `closed_at = now()` on the matching assignment (`company_id` is required �
 
 ## 3. Assignment algorithm
 
-On `POST /api/assignments`, in one transaction:
+On `POST /api/assignments`: 
+
+First, we capture `request_received_at = clock_timestamp()` at handler entry, before the lock wait — availability is evaluated as of this instant so a request received at 16:59:58 isn't re-judged after 17:00 just because it queued on the lock.
 
 1. **Serialize per company** — `pg_advisory_xact_lock(hashtext(company_id))`; concurrent requests per company run one at a time (the fairness race), other companies in parallel. The lock is transaction-scoped — released automatically at commit or rollback, so a crashed request never leaks it. (`hashtext` collisions only over-serialize — harmless.)
 2. **Idempotency check** — if `(company_id, ticket_id)` exists, return it.
-3. **Find available agents** — for each **active** agent, convert the request time to their zone with Luxon and test it against their shift windows (agent-local day); none available → `no_one_available`.
+3. **Find available agents** — for each **active** agent, convert `request_received_at` to their zone with Luxon and test it against their shift windows (agent-local day); none available → `no_one_available`.
 4. **Select one**: fewest open tickets → least recently assigned (never-assigned first) → lowest ID. One query:
 
    ```sql
@@ -121,7 +123,7 @@ On `POST /api/assignments`, in one transaction:
 
    `open_count` counts only unclosed assignments — closing a ticket immediately frees the agent for new ones, so the metric is live load, not lifetime volume. `last_assigned` deliberately spans **all** assignments, closed included: the tie-breaker is about recency of receiving work, and closing a ticket shouldn't jump an agent to the front of the queue.
 
-5. **Insert and return** — write the assignment row. On backstop conflict, return the existing row.
+5. **Insert and return** — write the assignment row, stamping `assigned_at = clock_timestamp()` (not `now()`, which is transaction-start time — a request that waited on the lock could otherwise get a timestamp earlier than a request it was serialized after, corrupting the `last_assigned` tie-break). On backstop conflict, return the existing row.
 
 **What this selector guarantees.** Fairness here is **load-balancing, not per-hour quotas**: each ticket goes to the available agent carrying the least open work right now. Agents with identical schedules and closure rates stay within ±1 of each other. Agents scheduled for more hours receive more total tickets by being available more often — but during overlapping windows the selector deliberately favors whoever is least loaded, regardless of scheduled hours.
 ---
