@@ -15,12 +15,12 @@ The root cause is that assignment depends on one person's real-time knowledge of
 Two personas at each customer company:
 
 1. **Team lead / ops manager** — sets up the team's availability once, keeps it current as schedules change, and stops triaging. Uses the UI.
-2. **The customer's ticketing system** — calls our API when a new ticket arrives and receives the agent to assign. Ticket closure is also handled here.
+2. **The customer's ticketing system** — calls our API when a new ticket arrives and receives the agent to assign, and calls our close endpoint when a ticket is resolved so open counts stay accurate.
 
 ## What we're building
 
 1. **Availability management UI.** A team lead defines each agent, the agent's timezone, and the agent's recurring weekly shifts (e.g., Mon–Fri 09:00–17:00 in `Asia/Kolkata`). Agents can be added, edited, and deactivated.
-2. **Assignment API.** `POST` with a `company_id` and `ticket_id` returns the agent who should take the ticket, or an explicit "no one is available" response.
+2. **Assignment API.** `POST` with a `company_id` and `ticket_id` returns the agent who should take the ticket, or an explicit "no one is available" response. A companion endpoint marks tickets closed so the system tracks live workload.
 
 ## How assignment works
 
@@ -39,29 +39,29 @@ Availability is checked against the time we receive the assignment request — n
 
 ## What "fair" means
 
-- **Fairness is equal expected tickets per available hour, not per agent.** An agent scheduled for 40 hours a week receives proportionally more tickets than one scheduled for 10.
-- New tickets go to whoever has the fewest open tickets right now.
+- **Open ticket count.** Tickets will be assigned to the agent with the least number of open tickets.
+- **Ties rotate.** When open counts are equal, the ticket goes to the agent least recently assigned (never-assigned agents first), so equally loaded agents take turns instead of the same one being picked repeatedly
 - **Overlapping shifts dilute per-agent rate by design.** When two regions' shifts overlap, the pool is larger and each agent receives fewer tickets per hour.
 
 ## Scope
 
 **In scope**
 - Agent and weekly shift management UI
-- Assignment API
+- Assignment API + ticket-close endpoint
 - Timezone-correct availability, including overnight shifts
 - Idempotent, concurrency-safe assignment
 
 **Out of scope**
 - Login, roles, billing, account management
 - Holiday calendars, one-off overrides, mobile
-- History and open tickets preservation when agents are deactivated
 - Third-party integrations (PagerDuty, Opsgenie, etc.)
-- Reassignment of tickets when an agent is deactivated mid-shift or goes offline — their open tickets remain assigned.
+- Reassignment of tickets when an agent is deactivated mid-shift or goes offline — their open tickets remain assigned; a manual reassign action is the first thing we'd build next
 - Ticket content, priority, or routing by skill — we assign a person, nothing more
 
 ## Assumptions
 
-- `company_id` and `ticket_id` are opaque identifiers supplied by the caller; we do not manage the lifecycle of companies or tickets. Agents and their shifts are the only entities our system creates and manages.
+- `company_id` and `ticket_id` are opaque identifiers supplied by the caller; we do not manage the lifecycle of companies. 
+- The customer's ticketing system calls the close endpoint when tickets resolve; closes are idempotent, and tickets cannot be reopened.
 - All tickets weigh the same. The system has no signal about ticket difficulty.
 - One agent per ticket; no team assignments or reassignment.
 - Multiple tickets can be assigned to a single agent while they are on shift.
@@ -69,5 +69,4 @@ Availability is checked against the time we receive the assignment request — n
 ## Success criteria
 
 - Every assignment request, at any hour, returns in one API call either an assigned agent or a first-class "no one available" response — never a hang, a silent failure, or a wait for a human.
-- Over a steady stream of tickets, agents with identical shifts receive ticket counts within ±1 of each other.
-- The same ticket submitted twice never produces two assignments.
+- Over a steady stream of tickets, agents with identical shifts **and comparable closure rates** receive ticket counts within ±1 of each other.
