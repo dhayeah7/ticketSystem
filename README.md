@@ -133,20 +133,84 @@ curl -s -X POST http://localhost:3001/api/tickets/close \
 
 ## API reference
 
+The table below is the complete, authoritative list of HTTP endpoints. `implementation.md`
+covers the data model and design rationale and describes the core assignment/closure
+API in depth, but it intentionally omits some UI-support endpoints (e.g. the ticket
+history read) — for the request/response contract, this table is the source of truth.
+
 | Method & path | Purpose |
 |---|---|
 | `POST /api/assignments` | Auto-assign a ticket to the least-loaded on-shift agent. `201 assigned` / `200 already_assigned` / `200 no_one_available` |
 | `POST /api/tickets/close` | Close a ticket (idempotent). `200 closed` / `404 ticket_not_assigned` |
 | `GET /api/companies/:companyId/agents` | List agents with shifts, `active`, computed `on_shift_now`, and `open_tickets` |
 | `POST /api/companies/:companyId/agents` | Create an agent (`name`, `timezone`) |
-| `GET /api/companies/:companyId/tickets` | List a company's tickets (assignments) newest-first — powers the UI ticket history |
-| `PATCH /api/agents/:id` | Update `name`, `timezone`, or `active` |
-| `PUT /api/agents/:id/shifts` | Replace an agent's weekly shift list |
+| `GET /api/companies/:companyId/tickets` | List a company's tickets (assignments) newest-first — powers the UI ticket history. Paginated: `?page=` (0-based, default 0) `&pageSize=` (1–100, default 10). Responds `{ tickets, total, page, pageSize }` |
+| `PATCH /api/agents/:id` | Partial update of `name`, `timezone`, or `active` |
+| `PUT /api/agents/:id` | Replace an agent's full editable config (`name`, `timezone`, `active`, and `shifts`) in one transaction — the editor's Save uses this so fields and shifts commit together or not at all |
+| `PUT /api/agents/:id/shifts` | Replace only an agent's weekly shift list. `200 { agent }` |
 | `GET /health` | Liveness + DB connectivity check (not under `/api`). `200 {"status":"ok"}` / `503 {"status":"db_unavailable"}` |
 
-Validation failures return `422` with `{ "error": { "code": "invalid_request", "message" } }`.
-Shift fields: `day_of_week` (0 = Mon … 6 = Sun), `start_minute` (0–1439, inclusive),
-`end_minute` (1–1440, exclusive), `crosses_midnight` (bool).
+### Request bodies
+
+- `POST /api/assignments`, `POST /api/tickets/close` — `{ "company_id", "ticket_id" }`.
+  Both ids are required opaque strings (non-empty, max 255 chars); they are stored
+  verbatim (not trimmed) so idempotency keys match exactly what the caller sent.
+- `POST /api/companies/:companyId/agents` — `{ "name", "timezone" }`; returns `201 { agent }`.
+- `PATCH /api/agents/:id` — any subset of `{ "name", "timezone", "active" }`
+  (at least one required); returns `200 { agent }`.
+- `PUT /api/agents/:id` — `{ "name", "timezone", "shifts", "active"? }`
+  (`name`/`timezone`/`shifts` required, `active` optional); returns `200 { agent }`.
+- `PUT /api/agents/:id/shifts` — `{ "shifts": [...] }`; returns `200 { agent }`.
+
+### Response shapes
+
+Single-agent responses are wrapped as `{ "agent": AgentView }`; the list endpoint
+returns `{ "agents": AgentView[] }`.
+
+```jsonc
+// AgentView
+{
+  "id": "uuid",
+  "name": "Ada",
+  "timezone": "UTC",
+  "active": true,
+  "on_shift_now": true,      // always false when active is false
+  "open_tickets": 3,         // unclosed assignments
+  "shifts": [
+    { "day_of_week": 0, "start_minute": 540, "end_minute": 1020, "crosses_midnight": false }
+  ]
+}
+
+// Ticket record (items in GET /api/companies/:companyId/tickets → tickets[])
+{
+  "ticket_id": "T-1042",
+  "agent_id": "uuid",
+  "agent_name": "Ada",
+  "assigned_at": "2026-07-06T09:00:00.000Z",
+  "closed_at": null          // ISO timestamp once closed, else null
+}
+```
+
+Timestamps (`assigned_at`, `closed_at`) are ISO-8601 UTC strings.
+
+### Shift fields
+
+`day_of_week` (0 = Mon … 6 = Sun), `start_minute` (0–1439, inclusive),
+`end_minute` (1–1440, exclusive), `crosses_midnight` (bool). Without
+`crosses_midnight`, `start_minute < end_minute` and the window must be under 24h;
+with it, `end_minute < start_minute` (the window runs into the next day).
+
+### Error responses
+
+All errors share the shape `{ "error": { "code", "message" } }`:
+
+| Status | `code` | When |
+|---|---|---|
+| `400` | `invalid_json` | Request body is not valid JSON |
+| `404` | `not_found` | `PATCH`/`PUT /api/agents/:id[/shifts]` on an unknown/invalid agent id |
+| `404` | `ticket_not_assigned` | `POST /api/tickets/close` for a ticket that was never assigned |
+| `422` | `invalid_request` | Validation failure (bad timezone, out-of-range shift minutes, missing/invalid fields, bad pagination params) |
+| `500` | `internal_error` | Unexpected server error |
 
 ## Project structure
 

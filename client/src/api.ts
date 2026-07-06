@@ -3,7 +3,7 @@ import type {
   AssignmentResult,
   CloseResult,
   ShiftView,
-  TicketView,
+  TicketPage,
 } from "./types";
 
 export class ApiError extends Error {
@@ -40,9 +40,13 @@ export const api = {
       `/companies/${encodeURIComponent(companyId)}/agents`
     );
   },
-  listTickets(companyId: string) {
-    return req<{ tickets: TicketView[] }>(
-      `/companies/${encodeURIComponent(companyId)}/tickets`
+  listTickets(companyId: string, page: number, pageSize: number) {
+    const q = new URLSearchParams({
+      page: String(page),
+      pageSize: String(pageSize),
+    });
+    return req<TicketPage>(
+      `/companies/${encodeURIComponent(companyId)}/tickets?${q}`
     );
   },
   createAgent(companyId: string, name: string, timezone: string) {
@@ -64,6 +68,20 @@ export const api = {
     return req<{ agent: AgentView }>(`/agents/${id}/shifts`, {
       method: "PUT",
       body: JSON.stringify({ shifts }),
+    });
+  },
+  saveAgent(
+    id: string,
+    data: {
+      name: string;
+      timezone: string;
+      active: boolean;
+      shifts: ShiftView[];
+    }
+  ) {
+    return req<{ agent: AgentView }>(`/agents/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
     });
   },
   assign(companyId: string, ticketId: string) {

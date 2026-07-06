@@ -50,6 +50,41 @@ export function validateCompanyId(value: unknown): string {
   return validateOpaqueId(value, "company_id");
 }
 
+/**
+ * Pagination for list endpoints. `page` is 0-based; `pageSize` is capped so a
+ * caller can't request an unbounded slab. `limit`/`offset` are derived for SQL.
+ */
+export interface Pagination {
+  page: number;
+  pageSize: number;
+  limit: number;
+  offset: number;
+}
+
+const DEFAULT_PAGE_SIZE = 10;
+const MAX_PAGE_SIZE = 100;
+
+// Query values arrive as strings (or string[] for repeated keys). Accept a
+// single non-negative integer; anything else is a client error.
+function parseNonNegativeInt(value: unknown, field: string): number | undefined {
+  if (value === undefined) return undefined;
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (typeof raw !== "string" || !/^\d+$/.test(raw)) {
+    throw new ValidationError(`${field} must be a non-negative integer`);
+  }
+  return Number(raw);
+}
+
+export function parsePagination(query: Record<string, unknown>): Pagination {
+  const page = parseNonNegativeInt(query.page, "page") ?? 0;
+  const pageSize =
+    parseNonNegativeInt(query.pageSize, "pageSize") ?? DEFAULT_PAGE_SIZE;
+  if (pageSize < 1 || pageSize > MAX_PAGE_SIZE) {
+    throw new ValidationError(`pageSize must be between 1 and ${MAX_PAGE_SIZE}`);
+  }
+  return { page, pageSize, limit: pageSize, offset: page * pageSize };
+}
+
 export function validateTicketId(value: unknown): string {
   return validateOpaqueId(value, "ticket_id");
 }

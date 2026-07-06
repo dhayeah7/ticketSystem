@@ -319,3 +319,94 @@ describe("validation", () => {
     expect(res.status).toBe(422);
   });
 });
+
+describe("GET /api/companies/:companyId/tickets (pagination)", () => {
+  function listTickets(
+    companyId: string,
+    query: Record<string, string | number> = {}
+  ) {
+    return request(app)
+      .get(`/api/companies/${companyId}/tickets`)
+      .query(query);
+  }
+
+  // Assign N tickets sequentially so assigned_at ordering is deterministic
+  // (T-0 oldest … T-{n-1} newest). Returns the ids in newest-first order.
+  async function seedTickets(companyId: string, n: number): Promise<string[]> {
+    await seedAgent({ companyId, name: "A", shifts: allDays() });
+    const ids: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const id = `T-${i}`;
+      await assign(companyId, id);
+      ids.push(id);
+    }
+    return ids.reverse();
+  }
+
+  it("returns the first page with total and echoed page/pageSize", async () => {
+    const newestFirst = await seedTickets("acme", 12);
+    const res = await listTickets("acme", { page: 0, pageSize: 10 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(12);
+    expect(res.body.page).toBe(0);
+    expect(res.body.pageSize).toBe(10);
+    expect(res.body.tickets).toHaveLength(10);
+    // Newest first.
+    expect(res.body.tickets.map((t: { ticket_id: string }) => t.ticket_id)).toEqual(
+      newestFirst.slice(0, 10)
+    );
+  });
+
+  it("returns the remaining rows on the second page", async () => {
+    const newestFirst = await seedTickets("acme", 12);
+    const res = await listTickets("acme", { page: 1, pageSize: 10 });
+
+    expect(res.body.total).toBe(12);
+    expect(res.body.tickets).toHaveLength(2);
+    expect(res.body.tickets.map((t: { ticket_id: string }) => t.ticket_id)).toEqual(
+      newestFirst.slice(10, 12)
+    );
+  });
+
+  it("a page past the end is empty but still reports the total", async () => {
+    await seedTickets("acme", 3);
+    const res = await listTickets("acme", { page: 5, pageSize: 10 });
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(3);
+    expect(res.body.tickets).toEqual([]);
+  });
+
+  it("defaults to page 0 / pageSize 10 when omitted", async () => {
+    await seedTickets("acme", 15);
+    const res = await listTickets("acme");
+    expect(res.body.page).toBe(0);
+    expect(res.body.pageSize).toBe(10);
+    expect(res.body.tickets).toHaveLength(10);
+  });
+
+  it("respects a custom pageSize", async () => {
+    await seedTickets("acme", 5);
+    const res = await listTickets("acme", { pageSize: 2 });
+    expect(res.body.tickets).toHaveLength(2);
+    expect(res.body.total).toBe(5);
+  });
+
+  it("rejects a non-integer page (422)", async () => {
+    const res = await listTickets("acme", { page: "abc" });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe("invalid_request");
+  });
+
+  it("rejects a pageSize over the max (422)", async () => {
+    const res = await listTickets("acme", { pageSize: 1000 });
+    expect(res.status).toBe(422);
+  });
+
+  it("returns an empty page with total 0 for an unknown company", async () => {
+    const res = await listTickets("nobody");
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(0);
+    expect(res.body.tickets).toEqual([]);
+  });
+});

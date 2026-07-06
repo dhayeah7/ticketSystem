@@ -186,6 +186,23 @@ export async function updateAgentRow(
   return rows.length ? mapAgent(rows[0]) : null;
 }
 
+// Delete-all + insert-all for an agent's shift list, on a caller-supplied
+// client so it can share a transaction with other writes.
+async function rewriteShifts(
+  client: PoolClient,
+  agentId: string,
+  shifts: Shift[]
+): Promise<void> {
+  await client.query("DELETE FROM shifts WHERE agent_id = $1", [agentId]);
+  for (const s of shifts) {
+    await client.query(
+      `INSERT INTO shifts (agent_id, day_of_week, start_minute, end_minute, crosses_midnight)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [agentId, s.dayOfWeek, s.startMinute, s.endMinute, s.crossesMidnight]
+    );
+  }
+}
+
 /**
  * Replace an agent's entire shift list atomically (delete-all + insert-all in
  * one transaction). Returns the agent, or null if it doesn't exist.
@@ -202,14 +219,36 @@ export async function replaceShifts(
       await client.query("ROLLBACK");
       return null;
     }
-    await client.query("DELETE FROM shifts WHERE agent_id = $1", [id]);
-    for (const s of shifts) {
-      await client.query(
-        `INSERT INTO shifts (agent_id, day_of_week, start_minute, end_minute, crosses_midnight)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [id, s.dayOfWeek, s.startMinute, s.endMinute, s.crossesMidnight]
-      );
+    await rewriteShifts(client, id, shifts);
+    await client.query("COMMIT");
+    return agent;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Update an agent's fields and replace its shift list in a single transaction,
+ * so the two can't partially commit. Returns the updated agent, or null if it
+ * doesn't exist.
+ */
+export async function updateAgentWithShifts(
+  id: string,
+  patch: AgentPatch,
+  shifts: Shift[]
+): Promise<Agent | null> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const agent = await updateAgentRow(client, id, patch);
+    if (!agent) {
+      await client.query("ROLLBACK");
+      return null;
     }
+    await rewriteShifts(client, id, shifts);
     await client.query("COMMIT");
     return agent;
   } catch (err) {

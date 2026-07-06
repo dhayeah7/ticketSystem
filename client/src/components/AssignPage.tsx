@@ -26,6 +26,7 @@ export function AssignPage({ companyId }: { companyId: string }) {
   const [busy, setBusy] = useState(false);
   const [lastResult, setLastResult] = useState<LastResult | null>(null);
   const [page, setPage] = useState(0);
+  const [total, setTotal] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -33,35 +34,40 @@ export function AssignPage({ companyId }: { companyId: string }) {
     try {
       const [agentsRes, ticketsRes] = await Promise.all([
         api.listAgents(companyId),
-        api.listTickets(companyId),
+        api.listTickets(companyId, page, TICKETS_PER_PAGE),
       ]);
       setAgents(agentsRes.agents);
       setTickets(ticketsRes.tickets);
+      setTotal(ticketsRes.total);
     } catch (e) {
       setError(errMsg(e));
     } finally {
       setLoading(false);
     }
-  }, [companyId]);
+  }, [companyId, page]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  // Keep counts, availability, and the history roughly live.
-  usePolling(() => void load(), 30000);
+  // Keep counts, availability, and the history roughly live. `load` is
+  // useCallback-stable, so pass it directly (see usePolling's contract) — an
+  // inline wrapper would reset the interval every render.
+  usePolling(load, 30000);
 
   const available = agents.filter((a) => a.on_shift_now);
 
-  // Client-side pagination for the ticket history. Clamp the current page so a
-  // shrinking list (e.g. after a background refresh) never leaves us stranded
-  // on an empty page.
-  const pageCount = Math.max(1, Math.ceil(tickets.length / TICKETS_PER_PAGE));
-  const currentPage = Math.min(page, pageCount - 1);
-  const pagedTickets = tickets.slice(
-    currentPage * TICKETS_PER_PAGE,
-    currentPage * TICKETS_PER_PAGE + TICKETS_PER_PAGE
-  );
+  // The server returns one page of tickets plus the full `total`; page controls
+  // derive from that. Reset to the first page when the company changes.
+  const pageCount = Math.max(1, Math.ceil(total / TICKETS_PER_PAGE));
+  useEffect(() => {
+    setPage(0);
+  }, [companyId]);
+  // If the current page falls past the end (e.g. a smaller company's history),
+  // step back so we never sit on an empty page.
+  useEffect(() => {
+    if (page > pageCount - 1) setPage(pageCount - 1);
+  }, [page, pageCount]);
 
   async function assign(e: React.FormEvent) {
     e.preventDefault();
@@ -170,25 +176,27 @@ export function AssignPage({ companyId }: { companyId: string }) {
         <h2>
           Ticket history{" "}
           <span className="muted" style={{ fontWeight: 400 }}>
-            {tickets.length > 0 ? `· ${tickets.length}` : null}
+            {total > 0 ? `· ${total}` : null}
           </span>
         </h2>
-        {tickets.length === 0 ? (
+        {total === 0 ? (
           <p className="hint">No tickets posted yet.</p>
         ) : (
           <>
             <table className="tickets">
               <thead>
                 <tr>
-                  <th>Ticket</th>
-                  <th>Agent</th>
-                  <th>Assigned</th>
-                  <th>Status</th>
-                  <th />
+                  <th scope="col">Ticket</th>
+                  <th scope="col">Agent</th>
+                  <th scope="col">Assigned</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">
+                    <span className="visually-hidden">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {pagedTickets.map((t) => {
+                {tickets.map((t) => {
                   const open = t.closed_at === null;
                   return (
                     <tr key={t.ticket_id}>
@@ -208,6 +216,7 @@ export function AssignPage({ companyId }: { companyId: string }) {
                             className="secondary"
                             onClick={() => closeTicket(t.ticket_id)}
                             type="button"
+                            aria-label={`Close ticket ${t.ticket_id}`}
                           >
                             Close
                           </button>
@@ -222,19 +231,19 @@ export function AssignPage({ companyId }: { companyId: string }) {
               <div className="pagination">
                 <button
                   className="secondary"
-                  disabled={currentPage === 0}
-                  onClick={() => setPage(currentPage - 1)}
+                  disabled={page === 0}
+                  onClick={() => setPage(page - 1)}
                   type="button"
                 >
                   Previous
                 </button>
                 <span className="muted">
-                  Page {currentPage + 1} of {pageCount}
+                  Page {page + 1} of {pageCount}
                 </span>
                 <button
                   className="secondary"
-                  disabled={currentPage >= pageCount - 1}
-                  onClick={() => setPage(currentPage + 1)}
+                  disabled={page >= pageCount - 1}
+                  onClick={() => setPage(page + 1)}
                   type="button"
                 >
                   Next

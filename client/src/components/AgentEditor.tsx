@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, errMsg } from "../api";
 import type { AgentView, ShiftView } from "../types";
 import { DAY_NAMES, parseTimeInput, toTimeInputValue } from "../lib/time";
@@ -50,6 +50,48 @@ export function AgentEditor({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  // Keep the latest onClose in a ref so the mount-only effect below never needs
+  // it as a dependency (TeamPage passes a new inline onClose each render, which
+  // would otherwise re-run the effect and call showModal() on an already-open
+  // dialog — an InvalidStateError).
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  // Open as a true modal: showModal() provides dialog semantics, a focus trap,
+  // an inert background, focus restoration on close, and native Escape-to-close.
+  // Every close path (Escape, backdrop, Cancel) funnels through the dialog's
+  // `close` event so React state stays in sync.
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    dialog.showModal();
+    const handleClose = () => onCloseRef.current();
+    dialog.addEventListener("close", handleClose);
+    return () => dialog.removeEventListener("close", handleClose);
+  }, []);
+
+  function requestClose() {
+    dialogRef.current?.close();
+  }
+
+  // Native <dialog> doesn't close on backdrop click, so replicate it: a click
+  // whose coordinates fall outside the content box is a backdrop click. Using
+  // the bounding rect (rather than `e.target === dialog`) keeps this correct
+  // regardless of how the dialog is centered, and ignores clicks that start on
+  // in-modal controls like the day/time selects.
+  function onDialogClick(e: React.MouseEvent<HTMLDialogElement>) {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const r = dialog.getBoundingClientRect();
+    const inside =
+      e.clientX >= r.left &&
+      e.clientX <= r.right &&
+      e.clientY >= r.top &&
+      e.clientY <= r.bottom;
+    if (!inside) requestClose();
+  }
+
   const allValid = shifts.every(isValidDraft) && name.trim() !== "";
 
   function updateShift(index: number, patch: Partial<ShiftDraft>) {
@@ -69,14 +111,19 @@ export function AgentEditor({
     setSaving(true);
     setError(null);
     try {
-      await api.updateAgent(agent.id, { name: name.trim(), timezone, active });
-      const payload: ShiftView[] = shifts.map((d) => ({
-        day_of_week: d.day,
-        start_minute: d.start,
-        end_minute: d.end,
-        crosses_midnight: crossesMidnight(d),
-      }));
-      await api.replaceShifts(agent.id, payload);
+      // One transactional write: fields and the full shift list commit together
+      // server-side, so a failure can't leave a partial save behind.
+      await api.saveAgent(agent.id, {
+        name: name.trim(),
+        timezone,
+        active,
+        shifts: shifts.map((d) => ({
+          day_of_week: d.day,
+          start_minute: d.start,
+          end_minute: d.end,
+          crosses_midnight: crossesMidnight(d),
+        })),
+      });
       await onSaved();
     } catch (e) {
       setError(errMsg(e));
@@ -86,8 +133,8 @@ export function AgentEditor({
   }
 
   return (
-    <div className="overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+    <dialog ref={dialogRef} className="modal-dialog" onClick={onDialogClick}>
+      <div className="modal">
         <h2>Edit agent</h2>
         {error && <div className="error">{error}</div>}
 
@@ -222,7 +269,7 @@ export function AgentEditor({
         </div>
 
         <div className="modal-actions">
-          <button className="secondary" onClick={onClose} type="button">
+          <button className="secondary" onClick={requestClose} type="button">
             Cancel
           </button>
           <button onClick={save} disabled={!allValid || saving} type="button">
@@ -230,6 +277,6 @@ export function AgentEditor({
           </button>
         </div>
       </div>
-    </div>
+    </dialog>
   );
 }

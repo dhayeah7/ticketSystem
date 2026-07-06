@@ -55,26 +55,35 @@ export function shortZone(tz: string): string {
 /** Best-effort list of IANA time zones for the dropdown. */
 export function getTimeZones(): string[] {
   const intl = Intl as unknown as { supportedValuesOf?: (k: string) => string[] };
+  let zones: string[];
   try {
-    if (typeof intl.supportedValuesOf === "function") {
-      return intl.supportedValuesOf("timeZone");
-    }
+    zones =
+      typeof intl.supportedValuesOf === "function"
+        ? intl.supportedValuesOf("timeZone")
+        : FALLBACK_ZONES;
   } catch {
-    // fall through to the curated list
+    zones = FALLBACK_ZONES;
   }
-  return [
-    "UTC",
-    "America/New_York",
-    "America/Chicago",
-    "America/Denver",
-    "America/Los_Angeles",
-    "Europe/London",
-    "Europe/Berlin",
-    "Asia/Kolkata",
-    "Asia/Tokyo",
-    "Australia/Sydney",
-  ];
+  // Intl.supportedValuesOf("timeZone") omits "UTC" in most engines, yet the API
+  // accepts it and guessZone() returns it as the default. Without a matching
+  // <option> the controlled <select> silently renders its first entry
+  // (Africa/Abidjan) while state still holds "UTC" — a display/value mismatch.
+  // Guarantee UTC is present (and first) so it's always selectable.
+  return zones.includes("UTC") ? zones : ["UTC", ...zones];
 }
+
+const FALLBACK_ZONES = [
+  "UTC",
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "Europe/London",
+  "Europe/Berlin",
+  "Asia/Kolkata",
+  "Asia/Tokyo",
+  "Australia/Sydney",
+];
 
 /** The browser's current zone, defaulting to UTC. */
 export function guessZone(): string {

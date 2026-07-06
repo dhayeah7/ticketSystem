@@ -31,3 +31,10 @@ export interface TicketView {
   assigned_at: string;
   closed_at: string | null;
 }
+
+export interface TicketPage {
+  tickets: TicketView[];
+  total: number;
+  page: number;
+  pageSize: number;
+}

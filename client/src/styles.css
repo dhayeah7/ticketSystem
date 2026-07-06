@@ -212,15 +212,21 @@ button:disabled {
   color: var(--danger);
 }
 
-.overlay {
-  position: fixed;
-  inset: 0;
+/* AgentEditor uses a native <dialog> opened with showModal() — role=dialog,
+   focus trap, Escape-to-close, and an inert background come from the platform.
+   These rules strip the UA chrome and style the backdrop; .modal stays the
+   white content box. */
+dialog.modal-dialog {
+  border: none;
+  padding: 0;
+  background: transparent;
+  width: 100%;
+  max-width: 560px;
+  margin: auto;
+}
+
+dialog.modal-dialog::backdrop {
   background: rgba(20, 24, 33, 0.4);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 40px 16px;
-  overflow: auto;
 }
 
 .modal {
@@ -229,6 +235,8 @@ button:disabled {
   padding: 20px;
   width: 100%;
   max-width: 560px;
+  max-height: calc(100dvh - 64px);
+  overflow: auto;
 }
 
 .modal h2 {
@@ -526,4 +534,17 @@ button:disabled {
   gap: 12px;
   margin-top: 12px;
   font-size: 13px;
+}
+
+/* Visually hidden, but exposed to assistive tech (screen-reader-only labels). */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

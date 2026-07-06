@@ -16,6 +16,9 @@ function patchAgent(id: string, body: Record<string, unknown>) {
 function putShifts(id: string, shifts: unknown) {
   return request(app).put(`/api/agents/${id}/shifts`).send({ shifts });
 }
+function putAgent(id: string, body: Record<string, unknown>) {
+  return request(app).put(`/api/agents/${id}`).send(body);
+}
 
 // Shift windows (snake_case, as the API accepts them). A full day is expressed
 // as two sub-24h windows [00:00,12:00) + [12:00,24:00) — a single window is
@@ -189,6 +192,75 @@ describe("PUT /api/agents/:id/shifts", () => {
 
   it("returns 404 for a nonexistent agent", async () => {
     const res = await putShifts(NONEXISTENT_UUID, allDays());
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("PUT /api/agents/:id (combined save)", () => {
+  it("updates fields and replaces shifts in one call", async () => {
+    const created = await createAgent("acme", { name: "Ada", timezone: "UTC" });
+    const id = created.body.agent.id;
+
+    const res = await putAgent(id, {
+      name: "Ada Lovelace",
+      timezone: "Asia/Kolkata",
+      active: false,
+      shifts: [
+        { day_of_week: 1, start_minute: 540, end_minute: 1020, crosses_midnight: false },
+      ],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.agent.name).toBe("Ada Lovelace");
+    expect(res.body.agent.timezone).toBe("Asia/Kolkata");
+    expect(res.body.agent.active).toBe(false);
+    expect(res.body.agent.shifts).toHaveLength(1);
+  });
+
+  it("is atomic: invalid shifts roll back the field changes", async () => {
+    const created = await createAgent("acme", { name: "Ada", timezone: "UTC" });
+    const id = created.body.agent.id;
+    await putShifts(id, [
+      { day_of_week: 0, start_minute: 540, end_minute: 1020, crosses_midnight: false },
+    ]);
+
+    // Valid fields but an out-of-range shift: the whole request must fail (422)
+    // and leave BOTH the fields and the original shift untouched.
+    const res = await putAgent(id, {
+      name: "Should Not Persist",
+      timezone: "Asia/Tokyo",
+      active: true,
+      shifts: [
+        { day_of_week: 0, start_minute: 0, end_minute: 1500, crosses_midnight: false },
+      ],
+    });
+    expect(res.status).toBe(422);
+
+    const listed = await listAgents("acme");
+    const agent = listed.body.agents[0];
+    expect(agent.name).toBe("Ada");
+    expect(agent.timezone).toBe("UTC");
+    expect(agent.shifts).toHaveLength(1);
+    expect(agent.shifts[0].start_minute).toBe(540);
+  });
+
+  it("rejects a missing name (422)", async () => {
+    const created = await createAgent("acme", { name: "Ada", timezone: "UTC" });
+    const res = await putAgent(created.body.agent.id, {
+      timezone: "UTC",
+      active: true,
+      shifts: [],
+    });
+    expect(res.status).toBe(422);
+  });
+
+  it("returns 404 for a nonexistent agent", async () => {
+    const res = await putAgent(NONEXISTENT_UUID, {
+      name: "Ghost",
+      timezone: "UTC",
+      active: true,
+      shifts: [],
+    });
     expect(res.status).toBe(404);
   });
 });

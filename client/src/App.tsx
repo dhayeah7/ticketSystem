@@ -82,9 +82,12 @@ export default function App() {
           </nav>
 
           {view === "team" ? (
-            <TeamPage companyId={company} />
+            // key={company} ties page state to the company: switching companies
+            // remounts, so an open edit modal can't outlive its company context
+            // and save an agent from the previous company.
+            <TeamPage key={company} companyId={company} />
           ) : (
-            <AssignPage companyId={company} />
+            <AssignPage key={company} companyId={company} />
           )}
         </>
       ) : (

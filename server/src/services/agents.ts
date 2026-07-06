@@ -7,6 +7,7 @@ import {
   insertAgent,
   replaceShifts,
   updateAgentRow,
+  updateAgentWithShifts,
 } from "../db/agents";
 import { Shift, isAvailableAt } from "../domain/availability";
 import { Agent } from "../domain/types";
@@ -123,6 +124,39 @@ export async function replaceAgentShifts(
   }
   const shifts = parseShifts(shiftsRaw);
   const agent = await replaceShifts(id, shifts);
+  if (!agent) {
+    throw new NotFoundError("agent not found");
+  }
+  const openCounts = await getOpenTicketCounts(pool, agent.companyId);
+  return toAgentView(agent, shifts, openCounts.get(id) ?? 0);
+}
+
+/**
+ * Full-form save from the editor: validate fields + shifts up front, then
+ * persist both in a single transaction. This is what the modal calls so the
+ * user never sees a partial save (fields committed while shifts fail, or vice
+ * versa) — everything lands together or nothing does.
+ */
+export async function saveAgent(
+  id: string,
+  body: Record<string, unknown>
+): Promise<AgentView> {
+  if (!isUuid(id)) {
+    throw new NotFoundError("agent not found");
+  }
+  const patch: AgentPatch = {
+    name: validateName(body.name),
+    timezone: validateTimezone(body.timezone),
+  };
+  if (body.active !== undefined) {
+    if (typeof body.active !== "boolean") {
+      throw new ValidationError("active must be a boolean");
+    }
+    patch.active = body.active;
+  }
+  const shifts = parseShifts(body.shifts);
+
+  const agent = await updateAgentWithShifts(id, patch, shifts);
   if (!agent) {
     throw new NotFoundError("agent not found");
   }

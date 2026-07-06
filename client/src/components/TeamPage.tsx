@@ -34,7 +34,9 @@ export function TeamPage({ companyId }: { companyId: string }) {
   }, [load]);
 
   // Refresh periodically so the "on shift now" indicator stays roughly live.
-  usePolling(() => void load(), 30000);
+  // `load` is useCallback-stable, so pass it directly (see usePolling's
+  // contract) — an inline wrapper would reset the interval every render.
+  usePolling(load, 30000);
 
   async function addAgent(e: React.FormEvent) {
     e.preventDefault();

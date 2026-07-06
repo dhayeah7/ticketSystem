@@ -4,7 +4,7 @@ import {
   closeTicket,
   listCompanyTickets,
 } from "../services/assignments";
-import { validateCompanyId, validateTicketId } from "../domain/validation";
+import { validateCompanyId, validateTicketId, parsePagination } from "../domain/validation";
 import { ValidationError } from "../errors";
 
 export const assignmentsRouter = Router();
@@ -33,10 +33,20 @@ function sendValidationError(res: Response, err: unknown): boolean {
 
 // POST /api/assignments — assign a ticket to an available agent.
 assignmentsRouter.post("/assignments", async (req, res, next) => {
+  // Capture receipt time at handler entry, before any awaited I/O (body is
+  // already parsed; validation and pool.connect() come after). Availability is
+  // judged as of this instant so a request that later queues on the pool or the
+  // advisory lock is still evaluated against when it actually arrived — not when
+  // it happens to reach the DB. See assignTicket for why this is a Node clock.
+  const receivedAt = new Date();
   try {
     const input = readCompanyTicket(req.body);
 
-    const result = await assignTicket(input.companyId, input.ticketId);
+    const result = await assignTicket(
+      input.companyId,
+      input.ticketId,
+      receivedAt
+    );
     if (result.status === "no_one_available") {
       return res.status(200).json({ status: "no_one_available" });
     }
@@ -72,14 +82,23 @@ assignmentsRouter.post("/tickets/close", async (req, res, next) => {
   }
 });
 
-// GET /api/companies/:companyId/tickets — all tickets for a team (newest first).
+// GET /api/companies/:companyId/tickets — one page of a team's tickets (newest
+// first). Optional query: page (0-based, default 0), pageSize (1..100, default
+// 10). Responds { tickets, total, page, pageSize }.
 assignmentsRouter.get(
   "/companies/:companyId/tickets",
   async (req, res, next) => {
     try {
-      const tickets = await listCompanyTickets(req.params.companyId);
-      res.json({ tickets });
+      const { page, pageSize, limit, offset } = parsePagination(
+        req.query as Record<string, unknown>
+      );
+      const { tickets, total } = await listCompanyTickets(
+        req.params.companyId,
+        { limit, offset }
+      );
+      res.json({ tickets, total, page, pageSize });
     } catch (err) {
+      if (sendValidationError(res, err)) return;
       next(err);
     }
   }

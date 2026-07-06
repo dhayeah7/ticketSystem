@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS shifts (
   crosses_midnight boolean  NOT NULL DEFAULT false,
   -- Backstop for the app-level validation: a single window is always under 24h.
   CONSTRAINT shift_window_valid CHECK (
-    (crosses_midnight = false AND start_minute < end_minute) OR
+    (crosses_midnight = false AND start_minute < end_minute
+                              AND end_minute - start_minute < 1440) OR
     (crosses_midnight = true  AND end_minute   < start_minute)
   )
 );
@@ -41,6 +42,14 @@ CREATE TABLE IF NOT EXISTS assignments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_assignments_agent_id ON assignments (agent_id);
--- Speeds up the open-count aggregate in the selection query.
+-- Speeds up the per-agent open-count subquery in the selection query (assignTicket).
 CREATE INDEX IF NOT EXISTS idx_assignments_agent_open
   ON assignments (agent_id) WHERE closed_at IS NULL;
+
+-- Company-scoped UI read paths. The UNIQUE(company_id, ticket_id) index can
+-- filter by company_id (leading column) but not serve these, so add dedicated
+-- indexes that match the actual predicates.
+CREATE INDEX IF NOT EXISTS idx_assignments_company_open
+  ON assignments (company_id, agent_id) WHERE closed_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_assignments_company_assigned
+  ON assignments (company_id, assigned_at DESC);

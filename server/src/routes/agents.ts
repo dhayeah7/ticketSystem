@@ -3,6 +3,7 @@ import {
   createAgent,
   listAgents,
   replaceAgentShifts,
+  saveAgent,
   updateAgent,
 } from "../services/agents";
 import { NotFoundError, ValidationError } from "../errors";
@@ -48,6 +49,19 @@ agentsRouter.patch("/agents/:id", async (req, res, next) => {
   try {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const agent = await updateAgent(req.params.id, body);
+    res.json({ agent });
+  } catch (err) {
+    handleError(err, res, next);
+  }
+});
+
+// PUT /api/agents/:id — replace an agent's full editable config (name,
+// timezone, active, and the whole shift list) in one transaction. The editor's
+// Save uses this so fields and shifts commit together or not at all.
+agentsRouter.put("/agents/:id", async (req, res, next) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const agent = await saveAgent(req.params.id, body);
     res.json({ agent });
   } catch (err) {
     handleError(err, res, next);
