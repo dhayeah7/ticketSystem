@@ -7,7 +7,15 @@ a given ticket to the least-loaded on-shift agent (or reports that no one is
 available).
 
 - **Problem, users, scope, assumptions:** [`prd.md`](./prd.md)
-- **Data model, API, algorithm, edge cases, test plan:** [`implementation.md`](./implementation.md)
+- **Data model, algorithm, edge cases, design rationale:** [`implementation.md`](./implementation.md)
+- **HTTP API contract (source of truth):** the [API reference](#api-reference) in this README
+
+> **On the docs split:** `implementation.md` is the design narrative (why the
+> data model and algorithm look the way they do). Where it and this README
+> disagree on the HTTP contract, **this README wins** — some of the design doc's
+> specifics have drifted from the code (e.g. it predates request pagination and
+> describes an earlier timestamp/transaction approach). Treat those parts of
+> `implementation.md` as background, not the contract.
 
 ## Stack
 
@@ -164,8 +172,8 @@ history read) — for the request/response contract, this table is the source of
 
 ### Response shapes
 
-Single-agent responses are wrapped as `{ "agent": AgentView }`; the list endpoint
-returns `{ "agents": AgentView[] }`.
+**Agent endpoints.** Single-agent responses are wrapped as `{ "agent": AgentView }`;
+the list endpoint returns `{ "agents": AgentView[] }`.
 
 ```jsonc
 // AgentView
@@ -180,8 +188,31 @@ returns `{ "agents": AgentView[] }`.
     { "day_of_week": 0, "start_minute": 540, "end_minute": 1020, "crosses_midnight": false }
   ]
 }
+```
 
-// Ticket record (items in GET /api/companies/:companyId/tickets → tickets[])
+**Assignment / closure endpoints** return their own shapes (note: the `agent`
+here is a compact `{ id, name, timezone }`, *not* a full `AgentView`):
+
+```jsonc
+// POST /api/assignments → 201 assigned  /  200 already_assigned
+{
+  "status": "assigned",                 // or "already_assigned" on retry
+  "agent": { "id": "uuid", "name": "Ada", "timezone": "UTC" },
+  "assigned_at": "2026-07-06T09:00:00.000Z"
+}
+
+// POST /api/assignments → 200 no_one_available (nothing stored)
+{ "status": "no_one_available" }
+
+// POST /api/tickets/close → 200 (also returned unchanged on a repeat close)
+{ "status": "closed", "closed_at": "2026-07-06T10:00:00.000Z" }
+```
+
+**Ticket history.** `GET /api/companies/:companyId/tickets` returns a page
+wrapper `{ "tickets": TicketRecord[], "total", "page", "pageSize" }`:
+
+```jsonc
+// TicketRecord (items in tickets[])
 {
   "ticket_id": "T-1042",
   "agent_id": "uuid",
@@ -265,17 +296,3 @@ To override, copy `server/.env.example` to `server/.env`:
   the API accepts any minute.
 - No auth, roles, or rate limiting — per the trial scope, whoever uses the UI is
   assumed authorized.
-
-## What I'd build next
-
-- **Manual reassignment** — let a lead move a ticket off an agent (e.g. when
-  someone goes offline mid-shift); the most-requested follow-up.
-- **Age open tickets out of the fairness count** after N days, so a forgotten
-  unclosed ticket doesn't permanently skew an agent's load.
-- **Auth and roles** — real authentication and per-company authorization.
-- **One-off overrides and holidays** — time off and exceptions on top of the
-  recurring schedule.
-- **Move availability filtering into SQL** and add indexing/pagination for
-  larger teams.
-- **Observability** — metrics on assignment latency, per-agent distribution, and
-  `no_one_available` rates.
