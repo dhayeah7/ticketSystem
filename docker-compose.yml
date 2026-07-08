@@ -1,0 +1,24 @@
+# Local Postgres for the ticket assignment service.
+# `docker compose up -d` gives a version-pinned Postgres plus a throwaway
+# test database (created by the initdb script below) for integration tests.
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: ticketsystem_db
+    environment:
+      POSTGRES_USER: ticket
+      POSTGRES_PASSWORD: ticket
+      POSTGRES_DB: ticketsystem
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./server/docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ticket -d ticketsystem"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
